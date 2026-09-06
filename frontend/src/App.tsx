@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import Navbar from './components/Navbar';
-import {DoctorDirectory} from './components/DoctorDirectory';
+import { DoctorDirectory } from './components/DoctorDirectory';
 import MedicineInventory from './components/MedicineInventory';
 import AppointmentScheduler from './components/AppointmentScheduler';
 import SymptomLogger from './components/SymptomLogger';
@@ -16,6 +16,7 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<UserSession | null>(null);
   const [isLoginOpen, setIsLoginOpen] = useState(false);
 
+  // Role-based protection check
   useEffect(() => {
     const role = currentUser?.role?.toLowerCase();
 
@@ -40,6 +41,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-100 font-sans text-slate-800">
+      {/* Dark Green Header & Navigation */}
       <Navbar
         activeTab={activeTab}
         setActiveTab={setActiveTab}
@@ -48,23 +50,27 @@ export default function App() {
         onLogout={handleLogout}
       />
 
+      {/* Main Container Views */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
         {activeTab === 'doctors' && <DoctorDirectory />}
         {activeTab === 'inventory' && <MedicineInventory />}
         {activeTab === 'grievances' && <GrievanceTracker />}
         {activeTab === 'abha' && <AbhaIntegration />}
         {activeTab === 'offline' && <OfflineSyncManager />}
-        
+
         {/* Role-Protected Component Views */}
-        {activeTab === 'appointments' && (currentUser?.role?.toLowerCase() === 'doctor' || currentUser?.role?.toLowerCase() === 'dho') && (
-          <AppointmentScheduler />
-        )}
-        {activeTab === 'symptoms' && (currentUser?.role?.toLowerCase() === 'asha' || currentUser?.role?.toLowerCase() === 'dho') && (
-          <SymptomLogger />
-        )}
-        {activeTab === 'attendance' && (currentUser?.role?.toLowerCase() === 'doctor' || currentUser?.role?.toLowerCase() === 'dho') && (
-          <DoctorAttendance />
-        )}
+        {activeTab === 'appointments' &&
+          (currentUser?.role?.toLowerCase() === 'doctor' || currentUser?.role?.toLowerCase() === 'dho') && (
+            <AppointmentScheduler />
+          )}
+        {activeTab === 'symptoms' &&
+          (currentUser?.role?.toLowerCase() === 'asha' || currentUser?.role?.toLowerCase() === 'dho') && (
+            <SymptomLogger />
+          )}
+        {activeTab === 'attendance' &&
+          (currentUser?.role?.toLowerCase() === 'doctor' || currentUser?.role?.toLowerCase() === 'dho') && (
+            <DoctorAttendance />
+          )}
       </main>
 
       <LoginModal

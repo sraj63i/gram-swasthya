@@ -9,6 +9,7 @@ export const api = axios.create({
   },
 });
 
+// GET Endpoints
 export const getDoctors = () => api.get('/doctors/');
 export const getMedicines = () => api.get('/medicines/');
 export const getAppointments = () => api.get('/appointments/');
@@ -17,6 +18,11 @@ export const getAttendance = () => api.get('/attendance/');
 export const getGrievances = () => api.get('/grievances/');
 export const getAbhaRecords = () => api.get('/abha/');
 
+// POST Endpoints
 export const createSymptomLog = (data: any) => api.post('/symptoms/', data);
 export const createGrievance = (data: any) => api.post('/grievances/', data);
 export const createAppointment = (data: any) => api.post('/appointments/', data);
+
+// PATCH/PUT Endpoints
+export const updateMedicineStock = (id: string | number, newStock: number) => 
+  api.patch(`/medicines/${id}/`, { stock: newStock });
