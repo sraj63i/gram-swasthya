@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Wifi, WifiOff, RefreshCw, Database, CheckCircle2, ArrowUpRight, AlertTriangle } from 'lucide-react';
 
-// Self-contained Offline Record Interface
 export interface OfflineRecord {
   id: string;
   type: 'ASHA_SYMPTOM' | 'STOCK_UPDATE' | 'GRIEVANCE';
@@ -10,16 +9,42 @@ export interface OfflineRecord {
   status: 'PENDING' | 'SYNCED';
 }
 
-const STORAGE_KEY = 'gram_swasthya_offline_queue';
+const DB_NAME = 'GramSwasthyaDB';
+const STORE_NAME = 'offline_sync_queue';
 
-// Internal Storage Helper Functions
-const getOfflineQueue = (): OfflineRecord[] => {
-  const data = localStorage.getItem(STORAGE_KEY);
-  return data ? JSON.parse(data) : [];
+// --- Native IndexedDB Helpers ---
+const openDB = (): Promise<IDBDatabase> => {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, 1);
+    request.onupgradeneeded = (event: any) => {
+      const db = event.target.result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = (e) => reject(e);
+  });
 };
 
-const saveToOfflineQueue = (type: OfflineRecord['type'], payload: any): OfflineRecord => {
-  const currentQueue = getOfflineQueue();
+const getOfflineQueueFromIndexedDB = async (): Promise<OfflineRecord[]> => {
+  try {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, 'readonly');
+      const store = tx.objectStore(STORE_NAME);
+      const request = store.getAll();
+      request.onsuccess = () => resolve(request.result || []);
+      request.onerror = (e) => reject(e);
+    });
+  } catch (err) {
+    console.error("IndexedDB read error:", err);
+    return [];
+  }
+};
+
+const saveToIndexedDB = async (type: OfflineRecord['type'], payload: any): Promise<OfflineRecord> => {
+  const db = await openDB();
   const newRecord: OfflineRecord = {
     id: `OFFLINE-${Date.now()}`,
     type,
@@ -28,13 +53,24 @@ const saveToOfflineQueue = (type: OfflineRecord['type'], payload: any): OfflineR
     status: 'PENDING',
   };
 
-  const updated = [newRecord, ...currentQueue];
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-  return newRecord;
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    const store = tx.objectStore(STORE_NAME);
+    const request = store.put(newRecord);
+    request.onsuccess = () => resolve(newRecord);
+    request.onerror = (e) => reject(e);
+  });
 };
 
-const clearSyncedQueue = () => {
-  localStorage.removeItem(STORAGE_KEY);
+const clearIndexedDBQueue = async (): Promise<void> => {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    const store = tx.objectStore(STORE_NAME);
+    const request = store.clear();
+    request.onsuccess = () => resolve();
+    request.onerror = (e) => reject(e);
+  });
 };
 
 export default function OfflineSyncManager() {
@@ -44,8 +80,13 @@ export default function OfflineSyncManager() {
   const [testModule, setTestModule] = useState<'ASHA_SYMPTOM' | 'STOCK_UPDATE' | 'GRIEVANCE'>('ASHA_SYMPTOM');
   const [sampleNote, setSampleNote] = useState('');
 
+  const refreshQueue = async () => {
+    const records = await getOfflineQueueFromIndexedDB();
+    setQueue(records);
+  };
+
   useEffect(() => {
-    setQueue(getOfflineQueue());
+    openDB().then(() => refreshQueue());
   }, []);
 
   const handleToggleNetwork = () => {
@@ -57,32 +98,92 @@ export default function OfflineSyncManager() {
     }
   };
 
-  const handleSimulateSubmit = (e: React.FormEvent) => {
+  const handleSimulateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!sampleNote.trim()) return;
 
+    // Fixed payload to match exact Django Symptom model fields
     const payload = {
-      note: sampleNote,
+      village_name: 'Kalyanpur',
+      symptom_type: sampleNote.slice(0, 50),
+      severity: 'Moderate',
+      patient_name: 'Field Sample Patient',
+      symptoms: sampleNote,
+      asha_id: 'ASHA-101',
+      phc_location: 'Block Kalyanpur Sub-Centre',
       recordedBy: 'Field Agent / ASHA',
-      location: 'Block Kalyanpur Sub-Centre',
+      note: sampleNote,
     };
 
     if (isOnline) {
-      alert('Network Online: Record posted directly to central server!');
+      try {
+        const res = await fetch('https://gram-swasthya-api.onrender.com/api/symptoms/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        
+        if (!res.ok) {
+          const errData = await res.json();
+          console.error("Server API Error response:", errData);
+          alert(`Server response error (${res.status}): ${JSON.stringify(errData)}`);
+        } else {
+          alert('Network Online: Record posted directly to central Django server!');
+        }
+      } catch (err) {
+        console.error('Fetch error:', err);
+        alert('Network request failed. Check server connection.');
+      }
+      setSampleNote('');
     } else {
-      saveToOfflineQueue(testModule, payload);
-      setQueue(getOfflineQueue());
+      await saveToIndexedDB(testModule, payload);
+      await refreshQueue();
       setSampleNote('');
     }
   };
 
-  const triggerSync = () => {
+  const triggerSync = async () => {
+    if (queue.length === 0) return;
     setIsSyncing(true);
-    setTimeout(() => {
-      clearSyncedQueue();
-      setQueue([]);
-      setIsSyncing(false);
-    }, 2000);
+
+    let hasError = false;
+
+    for (const item of queue) {
+      const endpoint = item.type === 'GRIEVANCE' 
+        ? '/api/grievances/' 
+        : item.type === 'STOCK_UPDATE' 
+        ? '/api/inventory/' 
+        : '/api/symptoms/';
+
+      try {
+        const res = await fetch(`https://gram-swasthya-api.onrender.com${endpoint}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(item.payload),
+        });
+
+        if (!res.ok) {
+          const errBody = await res.json();
+          console.error(`Sync error for ID ${item.id}:`, errBody);
+          hasError = true;
+        }
+      } catch (err) {
+        console.error(`Failed to send ${item.id}:`, err);
+        hasError = true;
+      }
+    }
+
+    if (!hasError) {
+      await clearIndexedDBQueue();
+      await refreshQueue();
+      alert('Sync Complete: Queued items successfully pushed to Django & PostgreSQL!');
+    } else {
+      alert('Sync finished with errors. Open DevTools Console to see detailed backend API messages.');
+    }
+
+    setIsSyncing(false);
   };
 
   return (
@@ -91,11 +192,11 @@ export default function OfflineSyncManager() {
       <div className="bg-gradient-to-r from-slate-900 via-emerald-950 to-emerald-900 text-white p-6 rounded-2xl shadow-lg flex flex-wrap items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2 text-emerald-400 text-xs font-bold uppercase tracking-wider mb-1">
-            <Database className="w-4 h-4" /> IndexedDB / Local Storage Adapter
+            <Database className="w-4 h-4" /> Native IndexedDB Engine
           </div>
           <h2 className="text-xl font-bold">Offline Sync Engine (PWA Capable)</h2>
           <p className="text-emerald-100 text-xs mt-1">
-            Guarantees uninterrupted operation in zero-connectivity rural zones by queuing actions locally until signal returns.
+            Guarantees uninterrupted operation in zero-connectivity rural zones by queuing actions locally in IndexedDB.
           </p>
         </div>
 
@@ -158,7 +259,7 @@ export default function OfflineSyncManager() {
                 isOnline ? 'bg-emerald-700 hover:bg-emerald-800' : 'bg-amber-600 hover:bg-amber-700'
               }`}
             >
-              {isOnline ? 'Post Directly to Server' : 'Queue Locally (Offline Storage)'}
+              {isOnline ? 'Post Directly to Server' : 'Queue Locally (IndexedDB Storage)'}
             </button>
           </form>
         </div>
@@ -216,7 +317,7 @@ export default function OfflineSyncManager() {
                       </span>
                       <span className="font-bold text-slate-800">{item.type}</span>
                     </div>
-                    <p className="text-slate-600 text-[11px] italic">"{item.payload.note}"</p>
+                    <p className="text-slate-600 text-[11px] italic">"{item.payload.symptom_type || item.payload.note}"</p>
                     <p className="text-[10px] text-slate-400">Time: {item.timestamp} | Status: {item.status}</p>
                   </div>
 

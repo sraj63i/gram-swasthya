@@ -21,16 +21,32 @@ export const DoctorDirectory: React.FC = () => {
       });
   }, []);
 
+  // Specialty Formatter & Spelling Corrector
+  const formatSpecialty = (specialty: string) => {
+    if (!specialty) return '';
+    
+    // Correct spelling check
+    if (specialty.toLowerCase().includes('gynecologist') || specialty.toLowerCase().includes('gynaecologist')) {
+      if (currentLang === 'hi') return 'स्त्री रोग विशेषज्ञ (Gynaecologist)';
+      if (currentLang === 'mr') return 'स्त्रीरोग तज्ज्ञ (Gynaecologist)';
+      return 'Gynaecologist'; // Updated correct British/Indian spelling
+    }
+    
+    return specialty;
+  };
+
   // Text-to-Speech handler for low-literacy users
   const handleSpeak = (doc: any) => {
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel(); // Stop any ongoing audio
 
+      const formattedSpecialty = formatSpecialty(doc.specialty);
+
       const statusText = doc.is_available_today
         ? currentLang === 'hi' ? 'आज अस्पताल में उपस्थित हैं' : currentLang === 'mr' ? 'आज रुग्णालयात उपस्थित आहेत' : 'On duty today'
         : currentLang === 'hi' ? 'आज उपलब्ध नहीं हैं' : currentLang === 'mr' ? 'आज उपलब्ध नाहीत' : 'Unavailable today';
 
-      const speechText = `${doc.name}. ${doc.specialty}. ${doc.phc_name}. ${statusText}.`;
+      const speechText = `${doc.name}. ${formattedSpecialty}. ${doc.phc_name}. ${statusText}.`;
 
       const utterance = new SpeechSynthesisUtterance(speechText);
       const langMap: Record<string, string> = { hi: 'hi-IN', mr: 'mr-IN', en: 'en-US' };
@@ -73,7 +89,11 @@ export const DoctorDirectory: React.FC = () => {
                 </button>
               </div>
 
-              <p className="text-sm text-indigo-600 font-medium mt-1">{doc.specialty}</p>
+              {/* Specialty with corrected spelling */}
+              <p className="text-sm text-indigo-600 font-medium mt-1">
+                {formatSpecialty(doc.specialty)}
+              </p>
+              
               <p className="text-xs text-gray-500 mt-1">{doc.phc_name}</p>
             </div>
 
